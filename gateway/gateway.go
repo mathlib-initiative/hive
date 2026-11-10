@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bufio"
 	"crypto/subtle"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -20,7 +22,8 @@ var clientCredentials = []string{"Authorization", "X-Api-Key", "Cookie"}
 
 type gateway struct {
 	clients []client
-	routes  []route // longest prefix first
+	routes  []route     // longest prefix first
+	log     *requestLog // nil without a request log
 }
 
 type client struct {
@@ -38,14 +41,17 @@ func newGateway(c *Config) *gateway {
 	for name, token := range c.Clients {
 		g.clients = append(g.clients, client{name: name, token: []byte(token)})
 	}
+	if c.RequestLog != nil {
+		g.log = &requestLog{bucket: newBucket(c.RequestLog), gzip: c.RequestLog.Gzip}
+	}
 	for prefix, r := range c.Routes {
-		g.routes = append(g.routes, route{prefix: prefix, proxy: newProxy(prefix, r)})
+		g.routes = append(g.routes, route{prefix: prefix, proxy: newProxy(prefix, r, g.log != nil)})
 	}
 	sort.Slice(g.routes, func(i, j int) bool { return len(g.routes[i].prefix) > len(g.routes[j].prefix) })
 	return g
 }
 
-func newProxy(prefix string, r Route) *httputil.ReverseProxy {
+func newProxy(prefix string, r Route, logged bool) *httputil.ReverseProxy {
 	upstream, _ := url.Parse(r.Upstream) // checked by Config.validate
 	return &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
@@ -57,6 +63,12 @@ func newProxy(prefix string, r Route) *httputil.ReverseProxy {
 			}
 			for k, v := range r.Headers {
 				pr.Out.Header.Set(k, v)
+			}
+			if logged {
+				// The request log keeps response bodies readable. Without
+				// the client's Accept-Encoding, the transport asks for gzip
+				// itself and passes the response on decompressed.
+				pr.Out.Header.Del("Accept-Encoding")
 			}
 		},
 		// Inference responses are often streamed; pass every chunk on at once.
@@ -72,20 +84,29 @@ func newProxy(prefix string, r Route) *httputil.ReverseProxy {
 
 func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
-	lw := &loggingWriter{ResponseWriter: w, client: "-", status: http.StatusOK}
+	lw := &loggingWriter{ResponseWriter: w, status: http.StatusOK}
 	finished := false
 	// Deferred, so that a request is logged even when serve panics. The
 	// proxy does that, with http.ErrAbortHandler, when a streamed response
 	// breaks off.
 	defer func() {
-		note := ""
+		note, client, suffix := "", lw.client, ""
 		switch {
 		case r.Context().Err() != nil:
-			note = " (client went away)"
+			note = "client went away"
 		case !finished:
-			note = " (aborted)"
+			note = "aborted"
 		}
-		log.Printf("%s %s %s %d %s%s", lw.client, r.Method, r.URL.EscapedPath(), lw.status, time.Since(start).Round(time.Millisecond), note)
+		if client == "" {
+			client = "-"
+		}
+		if note != "" {
+			suffix = " (" + note + ")"
+		}
+		log.Printf("%s %s %s %d %s%s", client, r.Method, r.URL.EscapedPath(), lw.status, time.Since(start).Round(time.Millisecond), suffix)
+		if lw.capture != nil && !lw.hijacked {
+			g.log.add(start, r, lw, note)
+		}
 	}()
 	g.serve(lw, r)
 	finished = true
@@ -113,6 +134,9 @@ func (g *gateway) serve(w *loggingWriter, r *http.Request) {
 	}
 	for _, rt := range g.routes {
 		if r.URL.Path == rt.prefix || strings.HasPrefix(r.URL.Path, rt.prefix+"/") {
+			if g.log != nil {
+				w.capture, r = newCapture(r)
+			}
 			rt.proxy.ServeHTTP(w, r)
 			return
 		}
@@ -138,11 +162,14 @@ func (g *gateway) authenticate(r *http.Request) (name string, ok bool) {
 }
 
 // loggingWriter records the client and the response status for the access
-// log. Unwrap lets the proxy flush streamed responses through it.
+// log, and with a capture the response body for the request log. Unwrap
+// lets the proxy flush streamed responses through it.
 type loggingWriter struct {
 	http.ResponseWriter
-	client string
-	status int
+	client   string
+	status   int
+	capture  *capture
+	hijacked bool
 }
 
 func (w *loggingWriter) WriteHeader(status int) {
@@ -150,4 +177,19 @@ func (w *loggingWriter) WriteHeader(status int) {
 	w.ResponseWriter.WriteHeader(status)
 }
 
+func (w *loggingWriter) Write(p []byte) (int, error) {
+	if w.capture != nil {
+		w.capture.response.Write(p)
+	}
+	return w.ResponseWriter.Write(p)
+}
+
 func (w *loggingWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+// Hijack lets the proxy hand an upgraded connection, such as a WebSocket,
+// to the client and the upstream. Its traffic is not recorded.
+func (w *loggingWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	c, rw, err := http.NewResponseController(w.ResponseWriter).Hijack()
+	w.hijacked = err == nil
+	return c, rw, err
+}
