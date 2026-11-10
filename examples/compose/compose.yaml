@@ -1,0 +1,36 @@
+# hive-agent runs Claude Code, and hive-gateway adds the Anthropic API key to
+# its requests, so the agent never sees the key. The bind mounts end in z so
+# that the containers can read them on SELinux hosts, such as Fedora. See
+# README.md.
+services:
+  gateway:
+    image: ghcr.io/mathlib-initiative/hive-gateway
+    volumes:
+      - ./gateway.json:/etc/hive-gateway/config.json:ro,z
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?}
+      GATEWAY_TOKEN: ${GATEWAY_TOKEN:?}
+
+  agent:
+    image: ghcr.io/mathlib-initiative/hive-agent
+    command: >-
+      -cli claude -session resume -every 30m -listen :8080
+      -prompt-file /prompt/PROMPT.md -- --dangerously-skip-permissions
+    environment:
+      ANTHROPIC_BASE_URL: http://gateway:8080/anthropic
+      ANTHROPIC_AUTH_TOKEN: ${GATEWAY_TOKEN:?}
+    volumes:
+      - home:/home/node
+      - work:/work
+      - ./prompt:/prompt:ro,z
+    # The trigger API has no token here, so it is reachable from this
+    # machine only.
+    ports:
+      - 127.0.0.1:8080:8080
+    # Time for a run to stop after SIGTERM, and for hive-agent to exit.
+    stop_grace_period: 15s
+    depends_on: [gateway]
+
+volumes:
+  home:
+  work:

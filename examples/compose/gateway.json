@@ -1,0 +1,9 @@
+{
+  "token": "${GATEWAY_TOKEN}",
+  "routes": {
+    "/anthropic": {
+      "upstream": "https://api.anthropic.com",
+      "headers": { "x-api-key": "${ANTHROPIC_API_KEY}" }
+    }
+  }
+}
