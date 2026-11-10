@@ -1,4 +1,4 @@
-// Command hive-agent runs a coding agent CLI, claude or codex, again and
+// Command hive-agent runs a coding agent CLI, claude, codex or pi, again and
 // again: on a timer, when triggered over HTTP, or both. See README.md.
 package main
 
@@ -23,7 +23,7 @@ import (
 const tokenVar = "HIVE_AGENT_TOKEN"
 
 func main() {
-	cli := flag.String("cli", "", `agent CLI to run: "claude" or "codex" (required)`)
+	cli := flag.String("cli", "", `agent CLI to run: "claude", "codex" or "pi" (required)`)
 	session := flag.String("session", "", `"resume" continues the previous session on every run, "fresh" starts a new one (required)`)
 	prompt := flag.String("prompt", "", "prompt for every run")
 	promptFile := flag.String("prompt-file", "", "file holding the prompt, read again before every run")
@@ -53,8 +53,8 @@ func main() {
 		}
 	}
 	switch {
-	case *cli != "claude" && *cli != "codex":
-		log.Fatal(`-cli must be "claude" or "codex"`)
+	case *cli != "claude" && *cli != "codex" && *cli != "pi":
+		log.Fatal(`-cli must be "claude", "codex" or "pi"`)
 	case *session != "resume" && *session != "fresh":
 		log.Fatal(`-session must be "resume" or "fresh"`)
 	case *prompt != "" && *promptFile != "":

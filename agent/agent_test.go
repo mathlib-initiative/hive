@@ -25,6 +25,8 @@ func TestCommand(t *testing.T) {
 		{"claude", true, "claude -p --continue --model m"},
 		{"codex", false, "codex exec --model m -"},
 		{"codex", true, "codex exec resume --last --model m -"},
+		{"pi", false, "pi -p --model m"},
+		{"pi", true, "pi -p --continue --model m"},
 	} {
 		a := &agent{cli: tc.cli, resume: tc.resume, args: []string{"--model", "m"}}
 		if got := strings.Join(a.command(), " "); got != tc.want {
