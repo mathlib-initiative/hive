@@ -1,0 +1,13 @@
+{
+  "token": "${GATEWAY_TOKEN}",
+  "routes": {
+    "/anthropic": {
+      "upstream": "https://gateway.ai.cloudflare.com/v1/${CF_ACCOUNT_ID}/${CF_GATEWAY_ID}/anthropic",
+      "headers": { "cf-aig-authorization": "Bearer ${CF_AIG_TOKEN}" }
+    },
+    "/openai": {
+      "upstream": "https://gateway.ai.cloudflare.com/v1/${CF_ACCOUNT_ID}/${CF_GATEWAY_ID}/openai",
+      "headers": { "cf-aig-authorization": "Bearer ${CF_AIG_TOKEN}" }
+    }
+  }
+}
