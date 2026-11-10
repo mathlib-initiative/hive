@@ -56,19 +56,19 @@ gateway needs Unified Billing or stored provider keys (BYOK), because only the
 
 ## Running
 
-Build the image from the repository root, then run it with your config and
-secrets:
+Run the published image with your config and secrets:
 
 ```sh
-docker build -f gateway/Dockerfile -t hive-gateway .
 docker run --rm -p 8080:8080 \
   -v "$PWD/gateway/example.json:/etc/hive-gateway/config.json:ro" \
   -e GATEWAY_TOKEN -e CF_ACCOUNT_ID -e CF_GATEWAY_ID -e CF_AIG_TOKEN \
-  hive-gateway
+  ghcr.io/mathlib-initiative/hive-gateway
 ```
 
-Podman takes the same arguments. In Kubernetes, mount the config from a
-ConfigMap and set the variables from a Secret. Without a container, run
+Podman takes the same arguments. To build the image yourself, run
+`docker build -f gateway/Dockerfile -t hive-gateway .` in the repository root.
+In Kubernetes, mount the config from a ConfigMap and set the variables from a
+Secret. Without a container, run
 `go build -o hive-gateway ./gateway && ./hive-gateway -config config.json`.
 
 The gateway logs one line per request: method, path, status and duration. A

@@ -66,21 +66,24 @@ clients out, not the agent itself. `GET /healthz` returns 200.
 
 ## Container
 
-The image contains the three CLIs plus git, curl and tini. It runs as user
-`node` (uid 1000) in `/work`. Claude Code refuses
-`--dangerously-skip-permissions` as root, so keep it that way. Sessions and
-CLI settings live under `/home/node`, so mount a volume there to keep them
-across restarts.
+The image, `ghcr.io/mathlib-initiative/hive-agent`, contains the three CLIs
+plus git, curl and tini. It runs as user `node` (uid 1000) in `/work`.
+Claude Code refuses `--dangerously-skip-permissions` as root, so keep it that
+way. Sessions and CLI settings live under `/home/node`, so mount a volume
+there to keep them across restarts.
 
 ```sh
-docker build -f agent/Dockerfile -t hive-agent .
 mkdir -p work prompt  # and write prompt/PROMPT.md
 docker run -d --name agent \
   -v agent-home:/home/node -v "$PWD/work:/work" -v "$PWD/prompt:/prompt:ro" \
   -e ANTHROPIC_BASE_URL=http://gateway:8080/anthropic -e ANTHROPIC_AUTH_TOKEN \
-  hive-agent -cli claude -session resume -every 30m -prompt-file /prompt/PROMPT.md \
+  ghcr.io/mathlib-initiative/hive-agent \
+  -cli claude -session resume -every 30m -prompt-file /prompt/PROMPT.md \
   -- --dangerously-skip-permissions
 ```
+
+To build the image yourself, run
+`docker build -f agent/Dockerfile -t hive-agent .` in the repository root.
 
 The bind-mounted `/work` must be writable for uid 1000. Create it before
 starting, since Docker would otherwise create it owned by root. With rootless
