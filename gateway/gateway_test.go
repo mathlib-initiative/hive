@@ -299,7 +299,8 @@ func TestLoadConfig(t *testing.T) {
 		return p
 	}
 
-	c, err := loadConfig(write(`{"clients": {"a.b_c-1": "${TEST_TOKEN}"}, "routes": {"/p": {"upstream": "https://example.com/${TEST_TOKEN}", "headers": {"A": "Bearer ${TEST_TOKEN}", "B": "a$TEST_TOKEN${}b${c"}}}}`))
+	c, err := loadConfig(write(`{"clients": {"a.b_c-1": "${TEST_TOKEN}"}, "routes": {"/p": {"upstream": "https://example.com/${TEST_TOKEN}", "headers": {"A": "Bearer ${TEST_TOKEN}", "B": "a$TEST_TOKEN${}b${c"}}},
+		"request_log": {"url": "https://s3.example.com/${TEST_TOKEN}", "region": "${TEST_TOKEN}", "access_key_id": "${TEST_TOKEN}", "secret_access_key": "${TEST_TOKEN}", "gzip": true}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -307,8 +308,14 @@ func TestLoadConfig(t *testing.T) {
 	if c.Listen != ":8080" || c.Clients["a.b_c-1"] != "sekrit" || c.Routes["/p"].Upstream != "https://example.com/sekrit" || h["A"] != "Bearer sekrit" || h["B"] != "a$TEST_TOKEN${}b${c" {
 		t.Errorf("got %+v", c)
 	}
+	if l := *c.RequestLog; l != (RequestLog{"https://s3.example.com/sekrit", "sekrit", "sekrit", "sekrit", true}) {
+		t.Errorf("got %+v", l)
+	}
 
 	const routes = `"routes": {"/p": {"upstream": "https://example.com"}}`
+	requestLog := func(url, secret string) string {
+		return `{"request_log": {"url": "` + url + `", "region": "auto", "access_key_id": "id", "secret_access_key": "` + secret + `"}, ` + routes + `}`
+	}
 	for name, tc := range map[string]struct{ config, wantErr string }{
 		"unset":         {`{"routes": {"/p": {"upstream": "https://example.com", "headers": {"A": "${TEST_UNSET}"}}}}`, "TEST_UNSET"},
 		"empty":         {`{"clients": {"a": "${TEST_EMPTY}"}, ` + routes + `}`, "TEST_EMPTY"},
@@ -324,6 +331,12 @@ func TestLoadConfig(t *testing.T) {
 		"no token":      {`{"clients": {"a": ""}, ` + routes + `}`, "empty token"},
 		"token newline": {`{"clients": {"a": "${TEST_NEWLINE}"}, ` + routes + `}`, "control character"},
 		"same token":    {`{"clients": {"a": "${TEST_TOKEN}", "b": "${TEST_TOKEN}"}, ` + routes + `}`, "same token"},
+		"log url":       {requestLog("s3.example.com/b", "s"), "request_log: url"},
+		"log query":     {requestLog("https://s3.example.com/b?x=1", "s"), "request_log: url"},
+		"log user":      {requestLog("https://${TEST_TOKEN}@s3.example.com/b", "s"), "request_log: url"},
+		"log secret":    {requestLog("https://s3.example.com/b", ""), "required"},
+		"log newline":   {requestLog("https://s3.example.com/b", "${TEST_NEWLINE}"), "control character"},
+		"log region":    {`{"request_log": {"url": "https://s3.example.com/b", "access_key_id": "id", "secret_access_key": "s"}, ` + routes + `}`, "required"},
 	} {
 		_, err := loadConfig(write(tc.config))
 		if err == nil || !strings.Contains(err.Error(), tc.wantErr) {

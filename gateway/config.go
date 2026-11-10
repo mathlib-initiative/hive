@@ -24,6 +24,9 @@ type Config struct {
 	Clients map[string]string `json:"clients"`
 	// Routes maps a path prefix such as "/anthropic" to its upstream.
 	Routes map[string]Route `json:"routes"`
+	// RequestLog, if set, uploads a record of every forwarded request to an
+	// S3-compatible bucket.
+	RequestLog *RequestLog `json:"request_log"`
 }
 
 // Route forwards requests below one path prefix to an upstream.
@@ -34,6 +37,20 @@ type Route struct {
 	// Headers are set on every forwarded request, replacing any value sent by
 	// the client. This is where provider credentials go.
 	Headers map[string]string `json:"headers"`
+}
+
+// RequestLog stores one object per forwarded request in a bucket.
+type RequestLog struct {
+	// URL is the bucket's URL, optionally followed by a key prefix, in path
+	// style (https://ENDPOINT/BUCKET/PREFIX) or virtual-hosted style
+	// (https://BUCKET.ENDPOINT/PREFIX).
+	URL string `json:"url"`
+	// Region is the bucket's region, which uploads are signed for.
+	Region          string `json:"region"`
+	AccessKeyID     string `json:"access_key_id"`
+	SecretAccessKey string `json:"secret_access_key"`
+	// Gzip compresses each record.
+	Gzip bool `json:"gzip"`
 }
 
 func loadConfig(path string) (*Config, error) {
@@ -86,6 +103,12 @@ func (c *Config) expandEnv() error {
 		r.Headers = headers
 		c.Routes[prefix] = r
 	}
+	if l := c.RequestLog; l != nil {
+		l.URL = expand(l.URL)
+		l.Region = expand(l.Region)
+		l.AccessKeyID = expand(l.AccessKeyID)
+		l.SecretAccessKey = expand(l.SecretAccessKey)
+	}
 	if len(missing) > 0 {
 		return fmt.Errorf("unset or empty environment variables: %s", strings.Join(missing, ", "))
 	}
@@ -131,6 +154,18 @@ func (c *Config) validate() error {
 			if hasControl(v) {
 				return fmt.Errorf("route %q: header %q contains a control character, such as a trailing newline", prefix, k)
 			}
+		}
+	}
+	if l := c.RequestLog; l != nil {
+		u, err := url.Parse(l.URL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+			return errors.New("request_log: url must be an absolute http or https URL without user, query or fragment")
+		}
+		if l.Region == "" || l.AccessKeyID == "" || l.SecretAccessKey == "" {
+			return errors.New("request_log: region, access_key_id and secret_access_key are required")
+		}
+		if hasControl(l.Region) || hasControl(l.AccessKeyID) || hasControl(l.SecretAccessKey) {
+			return errors.New("request_log: a value contains a control character, such as a trailing newline")
 		}
 	}
 	return nil
