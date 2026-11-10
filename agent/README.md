@@ -49,7 +49,9 @@ of its own, so whatever those commands leave running is not stopped either.
 current run ends. A non-empty request body is added to the end of the
 prompt, after a blank line. All triggers that arrive while a run is in
 progress are merged into one next run. Queued bodies may total at most 1 MiB;
-past that, `POST /trigger` returns 429.
+past that, `POST /trigger` returns 429, but still asks for a run so that the
+queue drains. A single body larger than 1 MiB gets 400. Queued bodies are
+kept in memory only, so they are lost when hive-agent stops.
 
 ```sh
 curl -X POST -H "Authorization: Bearer $HIVE_AGENT_TOKEN" \
@@ -81,8 +83,14 @@ docker run -d --name agent \
 ```
 
 The bind-mounted `/work` must be writable for uid 1000. Create it before
-starting, since Docker would otherwise create it owned by root. The prompt is mounted read-only, outside `/work`, so that the
-agent cannot change its own instructions.
+starting, since Docker would otherwise create it owned by root. With rootless
+Podman, also add `--userns=keep-id:uid=1000,gid=1000`. The prompt is mounted
+read-only, outside `/work`, so that the agent cannot change its own
+instructions.
+
+`docker stop` waits 10 seconds before it kills the container. A run gets up
+to 10 seconds after SIGTERM to finish, so add `--stop-timeout 15` or more to
+give it that time.
 
 For codex, use `-cli codex` and pass
 `--dangerously-bypass-approvals-and-sandbox --skip-git-repo-check`. To route
@@ -103,9 +111,6 @@ provider's credential, such as `-e ANTHROPIC_AUTH_TOKEN`:
 ```json
 { "providers": { "anthropic": { "baseUrl": "http://gateway:8080/anthropic" } } }
 ```
-
-With rootless Podman, add `--userns=keep-id:uid=1000,gid=1000` so that the
-agent can write to a bind-mounted `/work`.
 
 ## Security notes
 
