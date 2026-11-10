@@ -65,25 +65,22 @@ func newProxy(prefix string, r Route) *httputil.ReverseProxy {
 func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	lw := &loggingWriter{ResponseWriter: w, status: http.StatusOK}
+	// Deferred, so that a request is logged even when serve panics. The
+	// proxy does that, with http.ErrAbortHandler, when a streamed response
+	// breaks off.
+	finished := false
 	defer func() {
-		// When a streamed response breaks off, the proxy panics with
-		// http.ErrAbortHandler, and the server closes the connection.
-		// Log such requests too, then let the panic go on.
-		v := recover()
 		note := ""
 		switch {
-		case v == nil:
 		case r.Context().Err() != nil:
 			note = " (client went away)"
-		default:
+		case !finished:
 			note = " (aborted)"
 		}
 		log.Printf("%s %s %d %s%s", r.Method, r.URL.EscapedPath(), lw.status, time.Since(start).Round(time.Millisecond), note)
-		if v != nil {
-			panic(v)
-		}
 	}()
 	g.serve(lw, r)
+	finished = true
 }
 
 func (g *gateway) serve(w http.ResponseWriter, r *http.Request) {

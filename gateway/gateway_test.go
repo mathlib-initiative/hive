@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"io"
 	"log"
 	"net/http"
@@ -11,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 )
@@ -223,57 +221,46 @@ func TestStreams(t *testing.T) {
 	}
 }
 
-// syncBuffer collects log output from the server's goroutines.
-type syncBuffer struct {
-	mu sync.Mutex
-	b  bytes.Buffer
-}
-
-func (s *syncBuffer) Write(p []byte) (int, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.b.Write(p)
-}
-
-func (s *syncBuffer) String() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.b.String()
-}
-
-func TestLogsAbortedStream(t *testing.T) {
-	var buf syncBuffer
-	log.SetOutput(&buf)
+// TestLogsCutOffStreams checks that a streamed response that ends early is
+// logged, with a note on which side ended it.
+func TestLogsCutOffStreams(t *testing.T) {
 	defer log.SetOutput(os.Stderr)
-	release := make(chan struct{})
-	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.WriteString(w, "data: first\n\n")
-		w.(http.Flusher).Flush()
-		<-release
-	}))
-	defer up.Close()
-	defer close(release)
-	gw := newTestGateway(t, &Config{Routes: map[string]Route{"/p": {Upstream: up.URL}}})
+	for _, tc := range []struct {
+		upstreamBreaks bool
+		note           string
+	}{
+		{false, " (client went away)"},
+		{true, " (aborted)"},
+	} {
+		var buf bytes.Buffer
+		log.SetOutput(&buf)
+		release := make(chan struct{})
+		up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			io.WriteString(w, "data: first\n\n")
+			w.(http.Flusher).Flush()
+			if tc.upstreamBreaks {
+				panic(http.ErrAbortHandler)
+			}
+			<-release
+		}))
+		gw := newTestGateway(t, &Config{Routes: map[string]Route{"/p": {Upstream: up.URL}}})
 
-	ctx, cancel := context.WithCancel(context.Background())
-	req, _ := http.NewRequestWithContext(ctx, "GET", gw.URL+"/p/stream", nil)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	bufio.NewReader(resp.Body).ReadString('\n')
-	cancel() // the client goes away in the middle of the stream
-	resp.Body.Close()
-
-	want := "GET /p/stream 200 "
-	for deadline := time.Now().Add(5 * time.Second); !strings.Contains(buf.String(), want); {
-		if time.Now().After(deadline) {
-			t.Fatalf("no log line for the broken-off stream: %q", buf.String())
+		resp, err := http.Get(gw.URL + "/p/stream")
+		if err != nil {
+			t.Fatal(err)
 		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if !strings.HasSuffix(buf.String(), " (client went away)\n") {
-		t.Errorf("log %q", buf.String())
+		if tc.upstreamBreaks {
+			io.ReadAll(resp.Body) // until the gateway gives up
+		} else {
+			bufio.NewReader(resp.Body).ReadString('\n')
+		}
+		resp.Body.Close()
+		gw.Close() // waits until the request is logged
+		close(release)
+		up.Close()
+		if !strings.HasSuffix(buf.String(), tc.note+"\n") || !strings.Contains(buf.String(), "GET /p/stream 200 ") {
+			t.Errorf("upstream breaks %v: log %q", tc.upstreamBreaks, buf.String())
+		}
 	}
 }
 
