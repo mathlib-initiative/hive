@@ -40,8 +40,8 @@ configured as usual: with its own settings files or with variables such as
 The CLI runs in a process group of its own. On timeout or shutdown, the group
 gets SIGTERM, then SIGKILL 10 seconds later. When a run ends, whatever is left
 in the group gets SIGKILL. A process that leaves the group, for example with
-`setsid`, is not stopped. pi runs each tool command in a session of its own,
-so whatever those commands leave running is not stopped either.
+`setsid`, is not stopped. pi runs each command of its bash tool in a session
+of its own, so whatever those commands leave running is not stopped either.
 
 ## Triggers
 
@@ -93,12 +93,12 @@ the variable named by `env_key`, such as `-e GATEWAY_TOKEN`.
 
 For pi, use `-cli pi` and choose a model, such as
 `-- --model anthropic/claude-haiku-4-5`. pi does not ask for permission
-before tool calls, so it needs no extra flag. Without `--approve`, it
-ignores project-local files such as `.pi/settings.json` and project skills.
-pi ignores `ANTHROPIC_BASE_URL`. To route it through hive-gateway, set the
-provider's `baseUrl` in `/home/node/.pi/agent/models.json` and pass the
-gateway token as the provider's credential, such as
-`-e ANTHROPIC_AUTH_TOKEN`:
+before tool calls, so it needs no extra flag. By default it ignores
+project-local files such as `.pi/settings.json` and project skills;
+`--approve` loads them. pi ignores `ANTHROPIC_BASE_URL`. To route it through
+hive-gateway, set the provider's `baseUrl` in
+`/home/node/.pi/agent/models.json` and pass the gateway token as the
+provider's credential, such as `-e ANTHROPIC_AUTH_TOKEN`:
 
 ```json
 { "providers": { "anthropic": { "baseUrl": "http://gateway:8080/anthropic" } } }
