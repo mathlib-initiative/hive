@@ -1,18 +1,19 @@
 # hive-agent
 
-Runs a coding agent CLI, `claude` or `codex`, again and again: on a timer,
-when triggered over HTTP, or both. Each run is one non-interactive
-invocation, `claude -p` or `codex exec`. Only one run happens at a time.
+Runs a coding agent CLI, `claude`, `codex` or `pi`, again and again: on a
+timer, when triggered over HTTP, or both. Each run is one non-interactive
+invocation, `claude -p`, `codex exec` or `pi -p`. Only one run happens at a
+time.
 
 ## Usage
 
 ```
-hive-agent -cli claude|codex -session resume|fresh [flags] [-- extra CLI arguments]
+hive-agent -cli claude|codex|pi -session resume|fresh [flags] [-- extra CLI arguments]
 ```
 
 | Flag | Meaning |
 |---|---|
-| `-cli` | Required. `claude` or `codex`. |
+| `-cli` | Required. `claude`, `codex` or `pi`. |
 | `-session` | Required. `resume`: every run continues the most recent session in the working directory, and the first run starts one. `fresh`: every run starts a new session. |
 | `-prompt`, `-prompt-file` | The prompt for every run. The file is read again before each run, so it can change while the agent is running. If it cannot be read, the run is skipped and its trigger messages are kept for the next run. |
 | `-every` | Run at start, then this long after each run ends (`30m`, `1h`). Needs a prompt. |
@@ -26,6 +27,7 @@ passed to the CLI, which runs as:
 |---|---|---|
 | claude | `claude -p ARGS` | `claude -p --continue ARGS` |
 | codex | `codex exec ARGS -` | `codex exec resume --last ARGS -` |
+| pi | `pi -p ARGS` | `pi -p --continue ARGS` |
 
 The prompt goes to the CLI's standard input. With codex in resume mode, ARGS
 may only contain options that `codex exec resume` also accepts, such as `-m`,
@@ -38,7 +40,8 @@ configured as usual: with its own settings files or with variables such as
 The CLI runs in a process group of its own. On timeout or shutdown, the group
 gets SIGTERM, then SIGKILL 10 seconds later. When a run ends, whatever is left
 in the group gets SIGKILL. A process that leaves the group, for example with
-`setsid`, is not stopped.
+`setsid`, is not stopped. pi runs each tool command in a session of its own,
+so whatever those commands leave running is not stopped either.
 
 ## Triggers
 
@@ -61,10 +64,11 @@ clients out, not the agent itself. `GET /healthz` returns 200.
 
 ## Container
 
-The image contains both CLIs plus git, curl and tini. It runs as user `node`
-(uid 1000) in `/work`. Claude Code refuses `--dangerously-skip-permissions`
-as root, so keep it that way. Sessions and CLI settings live under
-`/home/node`, so mount a volume there to keep them across restarts.
+The image contains the three CLIs plus git, curl and tini. It runs as user
+`node` (uid 1000) in `/work`. Claude Code refuses
+`--dangerously-skip-permissions` as root, so keep it that way. Sessions and
+CLI settings live under `/home/node`, so mount a volume there to keep them
+across restarts.
 
 ```sh
 docker build -f agent/Dockerfile -t hive-agent .
@@ -86,6 +90,19 @@ codex through [hive-gateway](../gateway/), put the provider settings from the
 gateway README into `/home/node/.codex/config.toml`, or pass them with `-c`.
 Point `base_url` at the gateway, such as `http://gateway:8080/openai`, and set
 the variable named by `env_key`, such as `-e GATEWAY_TOKEN`.
+
+For pi, use `-cli pi` and choose a model, such as
+`-- --model anthropic/claude-haiku-4-5`. pi does not ask for permission
+before tool calls, so it needs no extra flag. Without `--approve`, it
+ignores project-local files such as `.pi/settings.json` and project skills.
+pi ignores `ANTHROPIC_BASE_URL`. To route it through hive-gateway, set the
+provider's `baseUrl` in `/home/node/.pi/agent/models.json` and pass the
+gateway token as the provider's credential, such as
+`-e ANTHROPIC_AUTH_TOKEN`:
+
+```json
+{ "providers": { "anthropic": { "baseUrl": "http://gateway:8080/anthropic" } } }
+```
 
 With rootless Podman, add `--userns=keep-id:uid=1000,gid=1000` so that the
 agent can write to a bind-mounted `/work`.

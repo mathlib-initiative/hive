@@ -16,7 +16,7 @@ import (
 )
 
 type agent struct {
-	cli     string // "claude" or "codex"
+	cli     string // "claude", "codex" or "pi"
 	resume  bool
 	prompt  func() (string, error)
 	args    []string // extra CLI arguments
@@ -34,11 +34,11 @@ type agent struct {
 const maxQueued = 1 << 20
 
 // command returns the CLI invocation for one run. The prompt goes on stdin.
-// Both CLIs start a new session when there is none to continue, so resume
-// needs no bookkeeping of its own.
+// The CLIs start a new session when there is none to continue, so resume
+// needs no bookkeeping of its own. claude and pi take the same flags.
 func (a *agent) command() []string {
-	if a.cli == "claude" {
-		cmd := []string{"claude", "-p"}
+	if a.cli == "claude" || a.cli == "pi" {
+		cmd := []string{a.cli, "-p"}
 		if a.resume {
 			cmd = append(cmd, "--continue")
 		}
