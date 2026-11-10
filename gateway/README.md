@@ -72,8 +72,9 @@ ConfigMap and set the variables from a Secret. Without a container, run
 `go build -o hive-gateway ./gateway && ./hive-gateway -config config.json`.
 
 The gateway logs one line per request: method, path, status and duration. A
-streamed response that breaks off is marked "(client went away)" or
-"(aborted)". It never logs headers, bodies or upstream URLs.
+request that ends early is marked "(client went away)", or "(aborted)" if the
+upstream broke off or the gateway failed. Upstream errors get a line of their
+own. The gateway never logs headers, bodies or upstream URLs.
 
 ## Clients
 
