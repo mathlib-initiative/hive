@@ -88,9 +88,10 @@ Podman, also add `--userns=keep-id:uid=1000,gid=1000`. The prompt is mounted
 read-only, outside `/work`, so that the agent cannot change its own
 instructions.
 
-`docker stop` waits 10 seconds before it kills the container. A run gets up
-to 10 seconds after SIGTERM to finish, so add `--stop-timeout 15` or more to
-give it that time.
+By default, `docker stop` waits 10 seconds before it kills the container,
+the same time that hive-agent gives a run after SIGTERM. Add
+`--stop-timeout 15` or more so that hive-agent can stop the run and exit by
+itself.
 
 For codex, use `-cli codex` and pass
 `--dangerously-bypass-approvals-and-sandbox --skip-git-repo-check`. To route
