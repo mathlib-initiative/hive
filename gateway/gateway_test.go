@@ -183,8 +183,8 @@ func TestLogEscapesPath(t *testing.T) {
 	gw := newTestGateway(t, &Config{Token: "secret", Routes: map[string]Route{"/p": {Upstream: "https://example.com"}}})
 
 	do(t, mustRequest(t, "GET", gw.URL+"/x%0A2026/11/10%2000:00:00%20GET%20/p%20200"))
-	if lines := strings.Count(buf.String(), "\n"); lines != 1 {
-		t.Errorf("%d log lines: %q", lines, buf.String())
+	if lines := strings.Count(buf.String(), "\n"); lines != 1 || strings.HasSuffix(buf.String(), ")\n") {
+		t.Errorf("log %q, want one line without a note", buf.String())
 	}
 }
 
@@ -250,7 +250,10 @@ func TestLogsCutOffStreams(t *testing.T) {
 			t.Fatal(err)
 		}
 		if tc.upstreamBreaks {
-			io.ReadAll(resp.Body) // until the gateway gives up
+			// The client must see the stream break off, not end.
+			if _, err := io.ReadAll(resp.Body); err == nil {
+				t.Error("cut-off stream ended cleanly")
+			}
 		} else {
 			bufio.NewReader(resp.Body).ReadString('\n')
 		}
