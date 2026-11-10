@@ -107,20 +107,26 @@ func TestReplacesClientCredentials(t *testing.T) {
 	}
 }
 
-func TestToken(t *testing.T) {
+func TestClients(t *testing.T) {
+	nextLine := captureLog(t)
 	up := newUpstream(t)
-	gw := newTestGateway(t, &Config{Token: "secret", Routes: map[string]Route{"/p": {Upstream: up.URL}}})
+	gw := newTestGateway(t, &Config{
+		Clients: map[string]string{"alice": "alice-token", "bob": "bob-token"},
+		Routes:  map[string]Route{"/p": {Upstream: up.URL}},
+	})
 
 	for _, tc := range []struct {
 		name, header, value string
 		want                int
+		client              string
 	}{
-		{"none", "", "", 401},
-		{"wrong", "X-Api-Key", "nope", 401},
-		{"x-api-key", "X-Api-Key", "secret", 200},
-		{"bearer", "Authorization", "Bearer secret", 200},
-		{"bearer lower case", "Authorization", "bearer secret", 200},
-		{"basic", "Authorization", "Basic secret", 401},
+		{"none", "", "", 401, "-"},
+		{"wrong", "X-Api-Key", "nope", 401, "-"},
+		{"part of a token", "X-Api-Key", "alice", 401, "-"},
+		{"x-api-key", "X-Api-Key", "alice-token", 200, "alice"},
+		{"bearer", "Authorization", "Bearer bob-token", 200, "bob"},
+		{"bearer lower case", "Authorization", "bearer alice-token", 200, "alice"},
+		{"basic", "Authorization", "Basic alice-token", 401, "-"},
 	} {
 		up.last = nil
 		req, _ := http.NewRequest("GET", gw.URL+"/p/x", nil)
@@ -133,6 +139,9 @@ func TestToken(t *testing.T) {
 		}
 		if tc.want == 200 && (up.last.Header.Get("X-Api-Key") != "" || up.last.Header.Get("Authorization") != "") {
 			t.Errorf("%s: token forwarded upstream", tc.name)
+		}
+		if line := nextLine(); !strings.Contains(line, " "+tc.client+" GET /p/x ") {
+			t.Errorf("%s: log %q, want client %s", tc.name, line, tc.client)
 		}
 	}
 
@@ -180,7 +189,7 @@ func TestLogEscapesPath(t *testing.T) {
 	var buf bytes.Buffer
 	log.SetOutput(&buf)
 	defer log.SetOutput(os.Stderr)
-	gw := newTestGateway(t, &Config{Token: "secret", Routes: map[string]Route{"/p": {Upstream: "https://example.com"}}})
+	gw := newTestGateway(t, &Config{Clients: map[string]string{"a": "secret"}, Routes: map[string]Route{"/p": {Upstream: "https://example.com"}}})
 
 	do(t, mustRequest(t, "GET", gw.URL+"/x%0A2026/11/10%2000:00:00%20GET%20/p%20200"))
 	if lines := strings.Count(buf.String(), "\n"); lines != 1 || strings.HasSuffix(buf.String(), ")\n") {
@@ -243,9 +252,11 @@ func TestLogsCutOffStreams(t *testing.T) {
 			}
 			<-release
 		}))
-		gw := newTestGateway(t, &Config{Routes: map[string]Route{"/p": {Upstream: up.URL}}})
+		gw := newTestGateway(t, &Config{Clients: map[string]string{"a": "t"}, Routes: map[string]Route{"/p": {Upstream: up.URL}}})
 
-		resp, err := http.Get(gw.URL + "/p/stream")
+		req := mustRequest(t, "GET", gw.URL+"/p/stream")
+		req.Header.Set("X-Api-Key", "t")
+		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -261,7 +272,7 @@ func TestLogsCutOffStreams(t *testing.T) {
 		gw.Close() // waits until the request is logged
 		close(release)
 		up.Close()
-		if !strings.HasSuffix(buf.String(), tc.note+"\n") || !strings.Contains(buf.String(), "GET /p/stream 200 ") {
+		if !strings.HasSuffix(buf.String(), tc.note+"\n") || !strings.Contains(buf.String(), " a GET /p/stream 200 ") {
 			t.Errorf("upstream breaks %v: log %q", tc.upstreamBreaks, buf.String())
 		}
 	}
@@ -279,42 +290,76 @@ func TestUpstreamDown(t *testing.T) {
 }
 
 func TestLoadConfig(t *testing.T) {
-	t.Setenv("TEST_TOKEN", "tok")
+	t.Setenv("TEST_TOKEN", "sekrit")
 	t.Setenv("TEST_EMPTY", "")
-	t.Setenv("TEST_NEWLINE", "tok\n")
+	t.Setenv("TEST_NEWLINE", "sekrit\n")
 	write := func(s string) string {
 		p := filepath.Join(t.TempDir(), "config.json")
 		os.WriteFile(p, []byte(s), 0o600)
 		return p
 	}
 
-	c, err := loadConfig(write(`{"routes": {"/p": {"upstream": "https://example.com/${TEST_TOKEN}", "headers": {"A": "Bearer ${TEST_TOKEN}", "B": "a$TEST_TOKEN${}b${c"}}}}`))
+	c, err := loadConfig(write(`{"clients": {"a.b_c-1": "${TEST_TOKEN}"}, "routes": {"/p": {"upstream": "https://example.com/${TEST_TOKEN}", "headers": {"A": "Bearer ${TEST_TOKEN}", "B": "a$TEST_TOKEN${}b${c"}}}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	h := c.Routes["/p"].Headers
-	if c.Listen != ":8080" || c.Routes["/p"].Upstream != "https://example.com/tok" || h["A"] != "Bearer tok" || h["B"] != "a$TEST_TOKEN${}b${c" {
+	if c.Listen != ":8080" || c.Clients["a.b_c-1"] != "sekrit" || c.Routes["/p"].Upstream != "https://example.com/sekrit" || h["A"] != "Bearer sekrit" || h["B"] != "a$TEST_TOKEN${}b${c" {
 		t.Errorf("got %+v", c)
 	}
 
+	const routes = `"routes": {"/p": {"upstream": "https://example.com"}}`
 	for name, tc := range map[string]struct{ config, wantErr string }{
-		"unset":     {`{"routes": {"/p": {"upstream": "https://example.com", "headers": {"A": "${TEST_UNSET}"}}}}`, "TEST_UNSET"},
-		"empty":     {`{"token": "${TEST_EMPTY}", "routes": {"/p": {"upstream": "https://example.com"}}}`, "TEST_EMPTY"},
-		"no routes": {`{}`, "no routes"},
-		"prefix":    {`{"routes": {"/p/": {"upstream": "https://example.com"}}}`, "prefix"},
-		"upstream":  {`{"routes": {"/p": {"upstream": "example.com/${TEST_TOKEN}"}}}`, "upstream"},
-		"unknown":   {`{"route": {}}`, "unknown field"},
-		"newline":   {`{"routes": {"/p": {"upstream": "https://example.com", "headers": {"A": "${TEST_NEWLINE}"}}}}`, "control character"},
-		"name":      {`{"routes": {"/p": {"upstream": "https://example.com", "headers": {"X(Key)": "x"}}}}`, "header name"},
+		"unset":         {`{"routes": {"/p": {"upstream": "https://example.com", "headers": {"A": "${TEST_UNSET}"}}}}`, "TEST_UNSET"},
+		"empty":         {`{"clients": {"a": "${TEST_EMPTY}"}, ` + routes + `}`, "TEST_EMPTY"},
+		"no routes":     {`{}`, "no routes"},
+		"prefix":        {`{"routes": {"/p/": {"upstream": "https://example.com"}}}`, "prefix"},
+		"upstream":      {`{"routes": {"/p": {"upstream": "example.com/${TEST_TOKEN}"}}}`, "upstream"},
+		"unknown":       {`{"route": {}}`, "unknown field"},
+		"newline":       {`{"routes": {"/p": {"upstream": "https://example.com", "headers": {"A": "${TEST_NEWLINE}"}}}}`, "control character"},
+		"name":          {`{"routes": {"/p": {"upstream": "https://example.com", "headers": {"X(Key)": "x"}}}}`, "header name"},
+		"client slash":  {`{"clients": {"a/b": "x"}, ` + routes + `}`, "a name must"},
+		"client dots":   {`{"clients": {"..": "x"}, ` + routes + `}`, "a name must"},
+		"client dash":   {`{"clients": {"-": "x"}, ` + routes + `}`, "a name must"},
+		"no token":      {`{"clients": {"a": ""}, ` + routes + `}`, "empty token"},
+		"token newline": {`{"clients": {"a": "${TEST_NEWLINE}"}, ` + routes + `}`, "control character"},
+		"same token":    {`{"clients": {"a": "${TEST_TOKEN}", "b": "${TEST_TOKEN}"}, ` + routes + `}`, "same token"},
 	} {
 		_, err := loadConfig(write(tc.config))
 		if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 			t.Errorf("%s: err %v, want %q", name, err, tc.wantErr)
 		}
-		if err != nil && strings.Contains(err.Error(), "tok") {
+		if err != nil && strings.Contains(err.Error(), "sekrit") {
 			t.Errorf("%s: error shows a secret: %v", name, err)
 		}
 	}
+}
+
+// captureLog captures the standard logger's output and returns a function
+// that waits for its next line. The gateway logs a request after its
+// response may have reached the client, so tests wait for the line rather
+// than read a buffer.
+func captureLog(t *testing.T) func() string {
+	lines := make(chan string, 100)
+	log.SetOutput(lineWriter(lines))
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	return func() string {
+		t.Helper()
+		select {
+		case line := <-lines:
+			return line
+		case <-time.After(5 * time.Second):
+			t.Fatal("no log line")
+			return ""
+		}
+	}
+}
+
+type lineWriter chan string
+
+func (w lineWriter) Write(p []byte) (int, error) {
+	w <- string(p)
+	return len(p), nil
 }
 
 func mustRequest(t *testing.T, method, url string) *http.Request {

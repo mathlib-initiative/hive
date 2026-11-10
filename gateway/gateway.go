@@ -19,8 +19,13 @@ import (
 var clientCredentials = []string{"Authorization", "X-Api-Key", "Cookie"}
 
 type gateway struct {
-	token  string
-	routes []route // longest prefix first
+	clients []client
+	routes  []route // longest prefix first
+}
+
+type client struct {
+	name  string
+	token []byte
 }
 
 type route struct {
@@ -29,7 +34,10 @@ type route struct {
 }
 
 func newGateway(c *Config) *gateway {
-	g := &gateway{token: c.Token}
+	g := &gateway{}
+	for name, token := range c.Clients {
+		g.clients = append(g.clients, client{name: name, token: []byte(token)})
+	}
 	for prefix, r := range c.Routes {
 		g.routes = append(g.routes, route{prefix: prefix, proxy: newProxy(prefix, r)})
 	}
@@ -64,7 +72,7 @@ func newProxy(prefix string, r Route) *httputil.ReverseProxy {
 
 func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
-	lw := &loggingWriter{ResponseWriter: w, status: http.StatusOK}
+	lw := &loggingWriter{ResponseWriter: w, client: "-", status: http.StatusOK}
 	finished := false
 	// Deferred, so that a request is logged even when serve panics. The
 	// proxy does that, with http.ErrAbortHandler, when a streamed response
@@ -77,20 +85,24 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case !finished:
 			note = " (aborted)"
 		}
-		log.Printf("%s %s %d %s%s", r.Method, r.URL.EscapedPath(), lw.status, time.Since(start).Round(time.Millisecond), note)
+		log.Printf("%s %s %s %d %s%s", lw.client, r.Method, r.URL.EscapedPath(), lw.status, time.Since(start).Round(time.Millisecond), note)
 	}()
 	g.serve(lw, r)
 	finished = true
 }
 
-func (g *gateway) serve(w http.ResponseWriter, r *http.Request) {
+func (g *gateway) serve(w *loggingWriter, r *http.Request) {
 	if r.URL.Path == "/healthz" {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	if g.token != "" && !g.authorized(r) {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
+	if len(g.clients) > 0 {
+		name, ok := g.authenticate(r)
+		if !ok {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		w.client = name
 	}
 	// A ".." segment could make the upstream resolve the request outside the
 	// route's base path, with the route's credentials attached. Some servers
@@ -108,18 +120,28 @@ func (g *gateway) serve(w http.ResponseWriter, r *http.Request) {
 	http.NotFound(w, r)
 }
 
-func (g *gateway) authorized(r *http.Request) bool {
+// authenticate returns the name of the client whose token r carries, and
+// false if r carries none of the tokens. Every token is compared, in
+// constant time.
+func (g *gateway) authenticate(r *http.Request) (name string, ok bool) {
 	got := r.Header.Get("X-Api-Key")
 	if auth := r.Header.Get("Authorization"); len(auth) > 7 && strings.EqualFold(auth[:7], "Bearer ") {
 		got = auth[7:]
 	}
-	return subtle.ConstantTimeCompare([]byte(got), []byte(g.token)) == 1
+	token := []byte(got)
+	for _, c := range g.clients {
+		if subtle.ConstantTimeCompare(token, c.token) == 1 {
+			name, ok = c.name, true
+		}
+	}
+	return name, ok
 }
 
-// loggingWriter records the response status for the access log. Unwrap lets
-// the proxy flush streamed responses through it.
+// loggingWriter records the client and the response status for the access
+// log. Unwrap lets the proxy flush streamed responses through it.
 type loggingWriter struct {
 	http.ResponseWriter
+	client string
 	status int
 }
 

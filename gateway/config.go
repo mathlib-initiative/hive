@@ -18,9 +18,10 @@ import (
 type Config struct {
 	// Listen is the address to serve on. Default ":8080".
 	Listen string `json:"listen"`
-	// Token, if set, must be sent by every client, either as
-	// "Authorization: Bearer <token>" or as "X-Api-Key: <token>".
-	Token string `json:"token"`
+	// Clients maps each client's name to its own token. If not empty, every
+	// request must carry one of the tokens, either as "Authorization: Bearer
+	// <token>" or as "X-Api-Key: <token>", and the log names its client.
+	Clients map[string]string `json:"clients"`
 	// Routes maps a path prefix such as "/anthropic" to its upstream.
 	Routes map[string]Route `json:"routes"`
 }
@@ -73,7 +74,9 @@ func (c *Config) expandEnv() error {
 		})
 	}
 	c.Listen = expand(c.Listen)
-	c.Token = expand(c.Token)
+	for name, token := range c.Clients {
+		c.Clients[name] = expand(token)
+	}
 	for prefix, r := range c.Routes {
 		r.Upstream = expand(r.Upstream)
 		headers := make(map[string]string, len(r.Headers))
@@ -94,8 +97,21 @@ func (c *Config) validate() error {
 		c.Listen = ":8080"
 	}
 	// Values are never printed, since they may contain secrets.
-	if hasControl(c.Token) {
-		return errors.New("token contains a control character, such as a trailing newline")
+	tokens := make(map[string]bool, len(c.Clients))
+	for name, token := range c.Clients {
+		if !clientName.MatchString(name) {
+			return fmt.Errorf("client %q: a name must start with an ASCII letter or digit and contain only ASCII letters, digits, '.', '_' and '-'", name)
+		}
+		if token == "" {
+			return fmt.Errorf("client %q: empty token", name)
+		}
+		if hasControl(token) {
+			return fmt.Errorf("client %q: token contains a control character, such as a trailing newline", name)
+		}
+		if tokens[token] {
+			return fmt.Errorf("client %q: another client has the same token", name)
+		}
+		tokens[token] = true
 	}
 	if len(c.Routes) == 0 {
 		return errors.New("no routes")
@@ -119,6 +135,11 @@ func (c *Config) validate() error {
 	}
 	return nil
 }
+
+// clientName matches a client name. Names appear in logs, so they are kept
+// to characters that need no quoting, and differ from "-", which marks a
+// request that was not authenticated.
+var clientName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
 // headerNameChars are the characters allowed in a header name (RFC 9110).
 const headerNameChars = "!#$%&'*+-.^_`|~0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"

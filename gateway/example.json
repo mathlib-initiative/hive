@@ -1,5 +1,5 @@
 {
-  "token": "${GATEWAY_TOKEN}",
+  "clients": { "agent": "${GATEWAY_TOKEN}" },
   "routes": {
     "/anthropic": {
       "upstream": "https://gateway.ai.cloudflare.com/v1/${CF_ACCOUNT_ID}/${CF_GATEWAY_ID}/anthropic",
