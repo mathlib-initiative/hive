@@ -25,11 +25,14 @@ jobs:
   # Pull requests only build the images. Pushes publish them to ghcr.io:
   # main as :latest, a tag v1.2.3 as :1.2.3, and either as :sha-<commit>.
   images:
+    # Publish only commits that pass the tests.
+    needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
     strategy:
+      fail-fast: false
       matrix:
         component: [gateway, agent]
     # Pushes publish in order, so that :latest ends up at the newest commit.

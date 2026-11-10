@@ -65,8 +65,8 @@ docker run --rm -p 8080:8080 \
   ghcr.io/mathlib-initiative/hive-gateway
 ```
 
-Podman takes the same arguments. To build the image yourself, run this in
-the repository root: `docker build -f gateway/Dockerfile -t hive-gateway .`
+Podman takes the same arguments. To build the image yourself, run
+`docker build -f gateway/Dockerfile -t hive-gateway .` in the repository root.
 In Kubernetes, mount the config from a ConfigMap and set the variables from a
 Secret. Without a container, run
 `go build -o hive-gateway ./gateway && ./hive-gateway -config config.json`.

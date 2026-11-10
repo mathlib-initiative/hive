@@ -82,8 +82,8 @@ docker run -d --name agent \
   -- --dangerously-skip-permissions
 ```
 
-To build the image yourself, run this in the repository root:
-`docker build -f agent/Dockerfile -t hive-agent .`
+To build the image yourself, run
+`docker build -f agent/Dockerfile -t hive-agent .` in the repository root.
 
 The bind-mounted `/work` must be writable for uid 1000. Create it before
 starting, since Docker would otherwise create it owned by root. With rootless
