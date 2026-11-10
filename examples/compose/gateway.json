@@ -1,5 +1,5 @@
 {
-  "token": "${GATEWAY_TOKEN}",
+  "clients": { "agent": "${GATEWAY_TOKEN}" },
   "routes": {
     "/anthropic": {
       "upstream": "https://api.anthropic.com",
