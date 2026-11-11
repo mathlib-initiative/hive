@@ -34,7 +34,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        component: [gateway, agent]
+        component: [gateway, agent, broker]
     # Pushes publish in order, so that :latest ends up at the newest commit.
     concurrency: images-${{ matrix.component }}-${{ github.ref }}
     steps:
