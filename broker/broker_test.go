@@ -63,7 +63,7 @@ type fakeGitHub struct {
 }
 
 type tokenRequest struct {
-	Path         string
+	Path, Body   string
 	Repositories []string          `json:"repositories"`
 	Permissions  map[string]string `json:"permissions"`
 }
@@ -77,8 +77,9 @@ func newFakeGitHub(t *testing.T) *fakeGitHub {
 			return
 		}
 		var req tokenRequest
-		json.NewDecoder(r.Body).Decode(&req)
-		req.Path = r.URL.Path
+		body, _ := io.ReadAll(r.Body)
+		json.Unmarshal(body, &req)
+		req.Path, req.Body = r.URL.Path, string(body)
 		f.mu.Lock()
 		f.requests = append(f.requests, req)
 		n, fail, lifetime, status := len(f.requests), f.fail, f.lifetime, f.status
@@ -242,6 +243,7 @@ func TestIssuesToken(t *testing.T) {
 		{"alice-token", `{"permissions": {"contents": "read"}}`},
 		{"alice-token", `{"repositories": ["docs"]}`},
 		{"dave-token", ""},
+		{"alice-token", `{"permissions": {"issues": "read"}}`}, // the level the access allows
 	} {
 		want := fmt.Sprintf("ghs_token%d", i+3)
 		if _, body := post(t, s, tc.token, tc.body); decode(t, body).Token != want {
@@ -251,7 +253,7 @@ func TestIssuesToken(t *testing.T) {
 
 	// A client without limits gets the whole installation, or asks for less.
 	_, body = post(t, s, "carol-token", "")
-	if req := gh.last(); decode(t, body).Token != "ghs_token6" || req.Path != "/app/installations/7/access_tokens" || req.Repositories != nil || req.Permissions != nil {
+	if req := gh.last(); decode(t, body).Token != "ghs_token7" || req.Path != "/app/installations/7/access_tokens" || req.Body != "{}" {
 		t.Errorf("GitHub got %+v", req)
 	}
 	status, _ = post(t, s, "carol-token", `{"repositories": ["any"], "permissions": {"issues": "write"}}`)
@@ -272,6 +274,9 @@ func TestRefusals(t *testing.T) {
 		{"wrong token", "nope", "", 401},
 		{"no access", "bob-token", "", 403},
 		{"other repository", "alice-token", `{"repositories": ["secret"]}`, 403},
+		{"empty repositories", "alice-token", `{"repositories": []}`, 400},
+		{"empty permissions", "carol-token", `{"permissions": {}}`, 400},
+		{"too large", "alice-token", `{"repositories": ["` + strings.Repeat("a", 64<<10) + `"]}`, 413},
 		{"higher level", "alice-token", `{"permissions": {"issues": "write"}}`, 403},
 		{"other permission", "alice-token", `{"permissions": {"administration": "read"}}`, 403},
 		{"unknown level", "alice-token", `{"permissions": {"contents": "all"}}`, 400},
@@ -327,6 +332,31 @@ func TestGitHubError(t *testing.T) {
 	if _, body := post(t, s, "alice-token", ""); decode(t, body).Token != "ghs_token2" {
 		t.Errorf("after an error: %s", body)
 	}
+}
+
+// TestConcurrent checks that parallel requests share the cache safely.
+func TestConcurrent(t *testing.T) {
+	gh := newFakeGitHub(t)
+	s := newTestBroker(t, gh)
+
+	var wg sync.WaitGroup
+	for i := range 20 {
+		wg.Go(func() {
+			// Not post, which may call t.Fatal outside the test's goroutine.
+			req, _ := http.NewRequest("POST", s.URL+"/github/token", nil)
+			req.Header.Set("X-Api-Key", []string{"alice-token", "carol-token", "dave-token"}[i%3])
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			resp.Body.Close()
+			if resp.StatusCode != 200 {
+				t.Errorf("status %d", resp.StatusCode)
+			}
+		})
+	}
+	wg.Wait()
 }
 
 func TestNotCreated(t *testing.T) {
@@ -409,6 +439,8 @@ func TestLoadConfig(t *testing.T) {
 		"api url":        {`{"clients": {"a": "x"}, "github": {"app_id": "1", "private_key_file": "k", "api_url": "api.github.com"}}`, "api_url"},
 		"unknown client": {`{"clients": {"a": "x"}, "github": {"app_id": "1", "private_key_file": "k", "access": {"b": {"installation_id": 1}}}}`, "unknown client"},
 		"installation":   {`{"clients": {"a": "x"}, "github": {"app_id": "1", "private_key_file": "k", "access": {"a": {}}}}`, "installation_id"},
+		"no repository":  {`{"clients": {"a": "x"}, "github": {"app_id": "1", "private_key_file": "k", "access": {"a": {"installation_id": 1, "repositories": []}}}}`, "repositories is empty"},
+		"no permission":  {`{"clients": {"a": "x"}, "github": {"app_id": "1", "private_key_file": "k", "access": {"a": {"installation_id": 1, "permissions": {}}}}}`, "permissions is empty"},
 		"level":          {`{"clients": {"a": "x"}, "github": {"app_id": "1", "private_key_file": "k", "access": {"a": {"installation_id": 1, "permissions": {"contents": "${TEST_TOKEN}"}}}}}`, "level must be"},
 		"repository":     {`{"clients": {"a": "x"}, "github": {"app_id": "1", "private_key_file": "k", "access": {"a": {"installation_id": 1, "repositories": ["o/r"]}}}}`, "repository name"},
 		"unknown field":  {`{"clients": {"a": "x"}, "github": {"app_id": "1", "private_key": "k"}}`, "unknown field"},

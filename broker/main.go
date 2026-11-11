@@ -1,6 +1,6 @@
-// Command hive-broker hands agents short-lived credentials, such as GitHub
-// App installation tokens, so that no agent holds a long-lived GitHub
-// credential. See README.md.
+// Command hive-broker hands agents short-lived GitHub App installation
+// tokens, so that no agent holds a long-lived GitHub credential. See
+// README.md.
 package main
 
 import (
@@ -30,6 +30,7 @@ func main() {
 		Addr:              c.Listen,
 		Handler:           b,
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second, // request bodies are small
 		IdleTimeout:       2 * time.Minute,
 	}
 

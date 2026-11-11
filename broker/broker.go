@@ -92,7 +92,11 @@ func (b *broker) githubToken(w http.ResponseWriter, r *http.Request, name string
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&req); err != nil && !errors.Is(err, io.EOF) {
-		http.Error(w, "invalid request body: "+err.Error(), http.StatusBadRequest)
+		status := http.StatusBadRequest
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
+			status = http.StatusRequestEntityTooLarge
+		}
+		http.Error(w, "invalid request body: "+err.Error(), status)
 		return
 	}
 	if err := dec.Decode(new(json.RawMessage)); !errors.Is(err, io.EOF) {

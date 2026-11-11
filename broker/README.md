@@ -1,8 +1,7 @@
 # hive-broker
 
-Hands agents short-lived credentials, so that no agent holds a long-lived
-GitHub credential. For now it issues GitHub App installation tokens, for use
-with `gh` and `git`.
+Hands agents short-lived GitHub App installation tokens, for use with `gh`
+and `git`, so that no agent holds a long-lived GitHub credential.
 
 The broker holds a GitHub App's private key. An agent asks the broker for a
 token with its own broker token. The broker checks what that agent may
@@ -42,20 +41,21 @@ the broker refuses to start.
 | Field | Meaning |
 |---|---|
 | `listen` | Address to serve on. Default `:8080`. |
-| `clients` | Required. Maps each client's name to its own token. Every request must send one, either as `Authorization: Bearer <token>` or as `X-Api-Key: <token>`, and the log names the client. A name starts with an ASCII letter or digit and contains only ASCII letters, digits, `.`, `_` and `-`. No two clients may share a token. This is the same as `clients` in [hive-gateway](../gateway/), so an agent can use one token for both. |
-| `github.app_id` | The App's client ID, which GitHub recommends, or its numeric app ID. |
-| `github.private_key_file` | Path of one of the App's private keys, in PEM. |
+| `clients` | Required. Maps each client's name to its own token. Every request must send one, either as `Authorization: Bearer <token>` or as `X-Api-Key: <token>`, and the log names the client. A name starts with an ASCII letter or digit and contains only ASCII letters, digits, `.`, `_` and `-`. No two clients may share a token. It has the same form as `clients` in [hive-gateway](../gateway/), so an agent can use one token for both. |
+| `github.app_id` | Required. The App's client ID, which GitHub recommends, or its numeric app ID. |
+| `github.private_key_file` | Required. Path of one of the App's private keys, in PEM. |
 | `github.api_url` | Optional. Base URL of the REST API. Default `https://api.github.com`; for GitHub Enterprise Server, `https://HOST/api/v3`. |
 | `github.access` | Maps a client's name to the most its tokens may reach. A client without an entry gets no GitHub tokens. |
-| `github.access.*.installation_id` | The App's installation on the account that owns the repositories. |
-| `github.access.*.repositories` | Optional. Limits tokens to these repositories of the installation, by name, at most 500. Without it, tokens reach every repository of the installation. |
-| `github.access.*.permissions` | Optional. Limits tokens to these permissions, each `read`, `write` or `admin`, such as `{"contents": "write"}`. Without it, tokens have every permission of the installation. |
+| `github.access.*.installation_id` | Required. The App's installation on the account that owns the repositories. |
+| `github.access.*.repositories` | Optional. Limits tokens to these repositories of the installation, by name, at most 500. Without it, tokens reach every repository of the installation; an empty list is refused. |
+| `github.access.*.permissions` | Optional. Limits tokens to these permissions, each `read`, `write` or `admin`, such as `{"contents": "write"}`. Without it, tokens have every permission of the installation; an empty object is refused. |
 
 ### Setting up a GitHub App
 
 1. In the settings of the account that owns the repositories, open
-   Developer settings, GitHub Apps, and create a new App. It needs no
-   webhook, so clear "Active" under Webhook.
+   Developer settings, GitHub Apps, and create a new App. Any name and
+   homepage URL will do. It needs no webhook, so clear "Active" under
+   Webhook.
 2. Give it the repository permissions that the agents need, such as
    Contents and Pull requests, both read and write.
 3. Install the App on the account, for all repositories or for some. The
@@ -69,7 +69,8 @@ A token never gets more than the App was granted and installed for, whatever
 
 ## Getting a token
 
-`POST /github/token` returns a token for the client's access:
+`POST /github/token` returns a token for the client's access. In these
+examples, `HIVE_BROKER_TOKEN` holds the client's token:
 
 ```sh
 curl -X POST -H "Authorization: Bearer $HIVE_BROKER_TOKEN" http://localhost:8080/github/token
@@ -83,8 +84,8 @@ A JSON body asks for less than the client's access, such as one repository
 or a lower level: `{"repositories": ["hive"], "permissions": {"contents":
 "read"}}`. Its `repositories` and `permissions` each replace the access's,
 so this token has no `pull_requests` permission. Asking for more than the
-access allows gets 403. When the token is limited to some repositories, the
-answer lists them.
+access allows gets 403. When the request or the client's access names
+repositories, the answer lists them.
 
 The broker reuses a token for the same client and request while it has more
 than 10 minutes left, so a token it hands out lasts between 10 and 60
@@ -97,6 +98,9 @@ authenticated), method, path, status and duration. GitHub errors get a line
 of their own. The broker never logs tokens.
 
 ## Using a token with gh and git
+
+These examples reach the broker as `broker`, and need `curl` and `jq`; the
+[hive-agent](../agent/) image has `curl` and `git`, but not yet `jq` or `gh`.
 
 `gh` takes a token from `GH_TOKEN`:
 
@@ -133,9 +137,11 @@ podman run --rm -p 8080:8080 \
   ghcr.io/mathlib-initiative/hive-broker
 ```
 
-With Docker, mount the key read-only. If only you can read the file, add
-`--user "$(id -u)"` so that the broker runs as you. In Kubernetes, mount the
-key from a Secret. To build the image yourself, run
+With Docker, mount the key read-only, such as with
+`-v "$PWD/app.pem:/run/secrets/github-app.pem:ro"`. If only you can read the
+file, add `--user "$(id -u)"` so that the broker runs as you. In Kubernetes,
+mount the config from a ConfigMap and the key from a Secret, and set the
+variables from a Secret. To build the image yourself, run
 `docker build -f broker/Dockerfile -t hive-broker .` in the repository root.
 Without a container, run
 `go build -o hive-broker ./broker && ./hive-broker -config config.json`.
@@ -147,5 +153,9 @@ Without a container, run
 - A client's broker token lets anyone who has it get that client's GitHub
   tokens. Replace it in `clients` if it leaks; tokens already handed out
   stay valid until they expire.
+- The broker does not limit how often a client asks. Each new token is a
+  request to GitHub as the App, so a client that keeps asking for different
+  tokens can make GitHub refuse new tokens for the App, and so for all
+  clients.
 - The broker serves plain HTTP. Keep it on a private network, and put a TLS
   proxy in front if traffic crosses a network you do not trust.

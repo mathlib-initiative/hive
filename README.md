@@ -8,7 +8,7 @@ itself: under Docker or Podman, in Kubernetes, or as a plain process.
 |---|---|
 | [hive-gateway](gateway/) | Reverse proxy for inference APIs. It holds the provider credentials and adds them to requests. |
 | [hive-agent](agent/) | Runs `claude -p`, `codex exec` or `pi -p` on a timer, on HTTP triggers, or both. |
-| [hive-broker](broker/) | Hands agents short-lived credentials, such as GitHub App installation tokens for `gh` and `git`. |
+| [hive-broker](broker/) | Hands agents short-lived GitHub App installation tokens for `gh` and `git`. |
 
 [examples/compose](examples/compose/) runs hive-agent and hive-gateway
 together with Docker Compose or Podman.

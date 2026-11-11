@@ -169,8 +169,16 @@ func (c *Config) validate() error {
 	return nil
 }
 
-// checkRequest checks repository names and permission levels.
+// checkRequest checks repository names and permission levels. An empty
+// list is refused rather than read as "everything", since it more likely
+// means "nothing"; a field that is left out means everything.
 func checkRequest(repos []string, perms map[string]string) error {
+	if repos != nil && len(repos) == 0 {
+		return errors.New("repositories is empty; leave it out to allow every repository")
+	}
+	if perms != nil && len(perms) == 0 {
+		return errors.New("permissions is empty; leave it out to allow every permission")
+	}
 	if len(repos) > 500 {
 		return errors.New("more than 500 repositories")
 	}
